@@ -156,7 +156,7 @@ function Optimizer(
     stdout::Any = stdout,
 )
     return Optimizer(
-        MOI.NL.FileFormats.Model(),
+        MOI.FileFormats.NL.Model(),
         _solver_command(solver_command),
         Dict{String,String}(opt => "" for opt in solver_args),
         stdin,
@@ -181,8 +181,13 @@ MOI.get(model::Optimizer, ::MOI.SolverName) = "AmplNLWriter"
 MOI.supports(::Optimizer, ::MOI.NLPBlock) = true
 
 MOI.supports(::Optimizer, ::MOI.Name) = true
-MOI.get(model::Optimizer, ::MOI.Name) = model.name
-MOI.set(model::Optimizer, ::MOI.Name, name::String) = (model.name = name)
+
+MOI.get(model::Optimizer, ::MOI.Name) = MOI.get(model.inner, MOI.Name())
+
+function MOI.set(model::Optimizer, ::MOI.Name, name::String)
+    MOI.set(model.inner, MOI.Name(), name)
+    return
+end
 
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.inner)
@@ -199,7 +204,7 @@ function MOI.empty!(model::Optimizer)
     return
 end
 
-MOI.is_empty(model::Optimizer) = isempty(model.inner)
+MOI.is_empty(model::Optimizer) = MOI.is_empty(model.inner)
 
 const _SCALAR_FUNCTIONS = Union{
     MOI.SingleVariable,
@@ -448,7 +453,7 @@ function _read_sol(io::IO, model::MOI.FileFormats.NL.Model)
     if length(primal_solution) > 0
         # .sol files don't seem to be able to return the objective
         # value. Evaluate it here instead.
-        objective_value = _evaluate(model.f, primal_solution)
+        objective_value = MOI.FileFormats.NL._evaluate(model.f, primal_solution)
     end
     return _NLResults(
         raw_status_string,
@@ -510,7 +515,11 @@ function MOI.get(model::Optimizer, ::MOI.TerminationStatus)
 end
 
 function MOI.get(model::Optimizer, attr::MOI.PrimalStatus)
-    return attr.N == 1 ? model.results.primal_status : MOI.NO_SOLUTION
+    if attr.result_index == 1
+        return model.results.primal_status
+    else
+        MOI.NO_SOLUTION
+    end
 end
 
 function MOI.get(model::Optimizer, attr::MOI.DualStatus)
@@ -518,7 +527,7 @@ function MOI.get(model::Optimizer, attr::MOI.DualStatus)
         length(model.results.dual_solution) +
         length(model.results.zL_out) +
         length(model.results.zU_out)
-    if attr.N != 1 ||
+    if attr.result_index != 1 ||
        n_duals == 0 ||
        model.results.termination_status != MOI.LOCALLY_SOLVED
         return MOI.NO_SOLUTION
@@ -549,7 +558,7 @@ function MOI.get(
     ci::MOI.ConstraintIndex{<:MOI.ScalarAffineFunction},
 )
     MOI.check_result_index_bounds(model, attr)
-    return _evaluate(
+    return MOI.FileFormats.NL._evaluate(
         model.inner.h[ci.value].expr,
         model.results.primal_solution,
     )
@@ -561,7 +570,7 @@ function MOI.get(
     ci::MOI.ConstraintIndex{<:MOI.ScalarQuadraticFunction},
 )
     MOI.check_result_index_bounds(model, attr)
-    return _evaluate(
+    return MOI.FileFormats.NL._evaluate(
         model.inner.g[ci.value].expr,
         model.results.primal_solution,
     )
